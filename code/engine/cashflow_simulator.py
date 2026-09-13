@@ -91,6 +91,17 @@ class CashflowSimulator:
         self.materialized_events, self.recurrence_notes = materialize_recurring_events(
             events, as_of=as_of, horizon_end=horizon_end,
         )
+        # Defensive, not silent: an event with amount=None (e.g. vision
+        # extraction was skipped, or its image lookup failed) cannot enter
+        # the day-walk arithmetic — problem_statement.md says never treat a
+        # blank amount as 0, and it certainly can't be added to a running
+        # Decimal balance as None. It's excluded from simulation and flagged
+        # here so the caller (pipeline/request_processor.py) can surface it
+        # rather than the run silently under- or over-stating the forecast.
+        self.unresolved_amount_notes = [
+            f"{e.event_id}: amount is unresolved (None) — excluded from the cash-flow simulation"
+            for e in self.materialized_events if e.amount is None
+        ]
 
     def _working_events(self, overrides: tuple[Override, ...]) -> list[FinancialEvent]:
         stops = {o.event_id for o in overrides if o.kind == "stop"}
@@ -121,6 +132,8 @@ class CashflowSimulator:
         working_events = self._working_events(overrides)
         events_by_day: dict[date, list[FinancialEvent]] = {}
         for event in working_events:
+            if event.amount is None:
+                continue   # see unresolved_amount_notes in __init__
             eff_date = event.effective_date
             if self.as_of <= eff_date <= horizon_last_day and event.counts_toward_cashflow:
                 events_by_day.setdefault(eff_date, []).append(event)

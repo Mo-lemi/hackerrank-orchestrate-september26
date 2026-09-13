@@ -375,6 +375,7 @@ class OutputRow(BaseModel):
             raise ValueError("payment_plan legs must be in chronological order")
         return v
 
+
     @field_validator("spending_changes_needed")
     @classmethod
     def validate_changes_format(cls, v: str) -> str:
@@ -385,12 +386,23 @@ class OutputRow(BaseModel):
             raise ValueError("spending_changes_needed allows at most 3 changes")
         stopped, reduced = set(), set()
         for leg in legs:
-            parts = leg.split(":")
-            if parts[0] == "stop" and len(parts) == 2:
-                stopped.add(parts[1])
-            elif parts[0] == "reduce_to" and len(parts) == 3:
-                reduced.add(parts[1])
-                Decimal(parts[2])
+            if leg.startswith("stop:"):
+                event_id = leg[len("stop:"):]
+                if not event_id:
+                    raise ValueError(f"malformed spending change: {leg}")
+                stopped.add(event_id)
+            elif leg.startswith("reduce_to:"):
+                rest = leg[len("reduce_to:"):]
+                if ":" not in rest:
+                    raise ValueError(f"malformed spending change: {leg}")
+                event_id, amount_str = rest.rsplit(":", 1)
+                if not event_id:
+                    raise ValueError(f"malformed spending change: {leg}")
+                try:
+                    Decimal(amount_str)
+                except Exception:
+                    raise ValueError(f"malformed spending change: {leg}")
+                reduced.add(event_id)
             else:
                 raise ValueError(f"malformed spending change: {leg}")
         if stopped & reduced:
